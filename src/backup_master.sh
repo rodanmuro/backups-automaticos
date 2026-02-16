@@ -27,6 +27,27 @@ source "${SCRIPT_DIR}/modulos/backup_mail.sh"
 # ============================================================
 
 main() {
+    # Soporte para --install: instalar servicio systemd de usuario
+    if [[ "${1:-}" == "--install" ]]; then
+        local service_src="${SCRIPT_DIR}/../systemd/backup-automatico.service"
+        local service_dest="$HOME/.config/systemd/user/backup-automatico.service"
+
+        if [[ ! -f "$service_src" ]]; then
+            echo "Error: archivo de servicio no encontrado: ${service_src}" >&2
+            exit 1
+        fi
+
+        mkdir -p "$HOME/.config/systemd/user"
+        cp "$service_src" "$service_dest"
+        systemctl --user daemon-reload
+        systemctl --user enable backup-automatico.service
+
+        echo "Servicio systemd instalado y habilitado"
+        echo "Archivo: ${service_dest}"
+        echo "El backup se ejecutará automáticamente al iniciar sesión"
+        exit 0
+    fi
+
     # Soporte para --init: crear archivo marcador en el volumen destino
     if [[ "${1:-}" == "--init" ]]; then
         if ! verificar_disco_montado "$BACKUP_DESTINO"; then
