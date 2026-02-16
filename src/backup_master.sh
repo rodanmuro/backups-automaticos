@@ -87,14 +87,14 @@ EOF
 
     # 1. Verificar si el disco destino está montado
     if ! verificar_disco_montado "$BACKUP_DESTINO"; then
-        logger_escribir "$BACKUP_LOG_MASTER" "ERROR" "Disco destino no montado: ${BACKUP_DESTINO}"
+        echo "Error: disco destino no montado en ${BACKUP_DESTINO}" >&2
         alerta_error_disco
         exit 1
     fi
 
     # 2. Verificar que el volumen sea el correcto
     if ! verificar_volumen "$BACKUP_DESTINO" "$BACKUP_MARCADOR" "$BACKUP_ID"; then
-        logger_escribir "$BACKUP_LOG_MASTER" "ERROR" "Volumen no reconocido como disco de backups"
+        echo "Error: volumen no reconocido como disco de backups (falta ${BACKUP_MARCADOR})" >&2
         alerta_error_volumen
         exit 1
     fi

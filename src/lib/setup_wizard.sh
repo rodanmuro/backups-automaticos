@@ -110,41 +110,56 @@ _seleccionar_disco() {
         fi
 
         SETUP_DESTINO="$ruta_manual"
-        _ok "Directorio de backup: ${SETUP_DESTINO}"
-        return 0
-    fi
-
-    # Selección de partición
-    local datos="${particiones[$((seleccion - 1))]}"
-    local part_nombre part_montaje
-    part_nombre=$(echo "$datos" | cut -d'|' -f1)
-    part_montaje=$(echo "$datos" | cut -d'|' -f4)
-
-    if [[ -n "$part_montaje" ]]; then
-        SETUP_DESTINO="$part_montaje"
-        _ok "Partición ${part_nombre} ya montada en ${SETUP_DESTINO}"
+        _ok "Directorio base: ${SETUP_DESTINO}"
     else
-        local punto_montaje
-        punto_montaje=$(_preguntar "¿En qué ruta quieres montar ${part_nombre}? (ej: /mnt/backup)")
+        # Selección de partición
+        local datos="${particiones[$((seleccion - 1))]}"
+        local part_nombre part_montaje
+        part_nombre=$(echo "$datos" | cut -d'|' -f1)
+        part_montaje=$(echo "$datos" | cut -d'|' -f4)
 
-        if [[ -z "$punto_montaje" ]]; then
-            _error "Ruta de montaje no puede estar vacía"
-            return 1
-        fi
-
-        echo ""
-        echo "  Se necesita sudo para crear el directorio y montar el disco."
-        sudo mkdir -p "$punto_montaje"
-        sudo mount "${part_nombre}" "$punto_montaje"
-
-        if mountpoint -q "$punto_montaje"; then
-            SETUP_DESTINO="$punto_montaje"
-            _ok "Partición montada en ${SETUP_DESTINO}"
+        if [[ -n "$part_montaje" ]]; then
+            SETUP_DESTINO="$part_montaje"
+            _ok "Partición ${part_nombre} ya montada en ${SETUP_DESTINO}"
         else
-            _error "No se pudo montar ${part_nombre}"
-            return 1
+            local punto_montaje
+            punto_montaje=$(_preguntar "¿En qué ruta quieres montar ${part_nombre}? (ej: /mnt/backup)")
+
+            if [[ -z "$punto_montaje" ]]; then
+                _error "Ruta de montaje no puede estar vacía"
+                return 1
+            fi
+
+            echo ""
+            echo "  Se necesita sudo para crear el directorio y montar el disco."
+            sudo mkdir -p "$punto_montaje"
+            sudo mount "${part_nombre}" "$punto_montaje"
+
+            if mountpoint -q "$punto_montaje"; then
+                SETUP_DESTINO="$punto_montaje"
+                _ok "Partición montada en ${SETUP_DESTINO}"
+            else
+                _error "No se pudo montar ${part_nombre}"
+                return 1
+            fi
         fi
     fi
+
+    # Preguntar subdirectorio contenedor dentro del disco
+    echo ""
+    echo "  Los backups se guardarán dentro de una carpeta en el disco seleccionado."
+    echo "  Esto evita mezclar archivos de backup con otros contenidos del disco."
+    echo ""
+    local subcarpeta
+    subcarpeta=$(_preguntar "Nombre de la carpeta de backups (Enter = backups-automaticos)")
+    [[ -z "$subcarpeta" ]] && subcarpeta="backups-automaticos"
+
+    SETUP_DESTINO="${SETUP_DESTINO%/}/${subcarpeta}"
+    mkdir -p "$SETUP_DESTINO" 2>/dev/null || {
+        echo "  Se necesita sudo para crear el directorio."
+        sudo mkdir -p "$SETUP_DESTINO"
+    }
+    _ok "Directorio de backups: ${SETUP_DESTINO}"
 }
 
 # ============================================================
@@ -190,22 +205,171 @@ _seleccionar_remote() {
 }
 
 # ============================================================
-# Paso 3: Verificar Thunderbird
+# Paso 3: Configurar mbsync (Gmail con OAuth2)
 # ============================================================
-_verificar_thunderbird() {
-    _paso "Paso 3/7: Verificar Thunderbird (Gmail)"
+_configurar_mbsync() {
+    _paso "Paso 3/7: Configurar mbsync (Gmail con OAuth2)"
 
-    if [[ ! -d "$HOME/.thunderbird" ]]; then
-        _warn "Thunderbird no está instalado o no tiene perfil"
-        _warn "El módulo de mail funcionará cuando configures Thunderbird con Gmail (IMAP)"
-        return 0
+    # 3a. Verificar dependencias
+    local dependencias_ok=true
+
+    if command -v mbsync &>/dev/null; then
+        _ok "mbsync (isync) instalado"
+    else
+        _error "mbsync no está instalado. Instálalo con: sudo apt install isync"
+        dependencias_ok=false
     fi
 
-    if find "$HOME/.thunderbird" -maxdepth 3 -type d -name "ImapMail" 2>/dev/null | grep -q .; then
-        _ok "Thunderbird configurado con cuenta IMAP"
+    # Verificar plugin XOAUTH2 para Cyrus SASL
+    local sasl_plugin_encontrado=false
+    for dir in /usr/lib/x86_64-linux-gnu/sasl2 /usr/lib/sasl2 /usr/local/lib/sasl2; do
+        if [[ -f "${dir}/libxoauth2.so" ]]; then
+            sasl_plugin_encontrado=true
+            break
+        fi
+    done
+
+    if $sasl_plugin_encontrado; then
+        _ok "Plugin SASL XOAUTH2 instalado"
     else
-        _warn "Thunderbird instalado pero sin cuenta IMAP configurada"
-        _warn "Configura Gmail en Thunderbird (IMAP) para que el módulo de mail funcione"
+        _error "Plugin cyrus-sasl-xoauth2 no encontrado"
+        echo "  Instálalo desde: https://github.com/moriyoshi/cyrus-sasl-xoauth2"
+        echo "    git clone https://github.com/moriyoshi/cyrus-sasl-xoauth2.git"
+        echo "    cd cyrus-sasl-xoauth2"
+        echo "    ./autogen.sh && ./configure && make && sudo make install"
+        dependencias_ok=false
+    fi
+
+    if ! command -v python3 &>/dev/null; then
+        _error "python3 no está instalado"
+        dependencias_ok=false
+    else
+        _ok "python3 disponible"
+    fi
+
+    if ! $dependencias_ok; then
+        _error "Instala las dependencias faltantes y vuelve a ejecutar --setup"
+        return 1
+    fi
+
+    # 3b. Pedir cuenta Gmail
+    local cuenta_email
+    cuenta_email=$(_preguntar "Cuenta de Gmail (ej: usuario@gmail.com)")
+
+    if [[ -z "$cuenta_email" ]]; then
+        _error "La cuenta de correo no puede estar vacía"
+        return 1
+    fi
+
+    SETUP_MAIL_CUENTA="$cuenta_email"
+
+    # 3c. Pedir credenciales OAuth2
+    echo ""
+    echo "  Para autenticación OAuth2 necesitas credenciales de Google Cloud Console."
+    echo "  Si no las tienes, sigue estos pasos:"
+    echo ""
+    echo "    1. Ve a https://console.cloud.google.com/"
+    echo "    2. Crea un proyecto (o usa uno existente)"
+    echo "    3. Habilita la API de Gmail"
+    echo "    4. Configura la pantalla de consentimiento OAuth"
+    echo "       IMPORTANTE: Publica la app en modo 'In production' para que"
+    echo "       los tokens no expiren cada 7 días"
+    echo "    5. Crea credenciales OAuth 2.0 (tipo: Aplicación de escritorio)"
+    echo "    6. Copia el Client ID y Client Secret"
+    echo ""
+
+    local client_id client_secret
+    client_id=$(_preguntar "Client ID de OAuth2")
+    client_secret=$(_preguntar "Client Secret de OAuth2")
+
+    if [[ -z "$client_id" ]] || [[ -z "$client_secret" ]]; then
+        _error "Client ID y Client Secret son obligatorios"
+        return 1
+    fi
+
+    # 3d. Crear directorio para tokens y ejecutar autorización OAuth2
+    local token_dir
+    token_dir="$(dirname "${HOME}/.local/share/backups-automaticos/gmail-tokens")"
+    mkdir -p "$token_dir"
+
+    local token_file="${HOME}/.local/share/backups-automaticos/gmail-tokens"
+    local oauth2_script="${SCRIPT_DIR}/lib/mutt_oauth2.py"
+
+    echo ""
+    echo "  Se abrirá una ventana del navegador para autorizar el acceso a Gmail."
+    echo "  Inicia sesión con ${cuenta_email} y autoriza la aplicación."
+    echo ""
+
+    # Eliminar token previo si existe (forzar re-autorización)
+    [[ -f "$token_file" ]] && rm -f "$token_file"
+
+    python3 "$oauth2_script" "$token_file" \
+        --authorize \
+        --provider google \
+        --authflow localhostauthcode \
+        --client-id "$client_id" \
+        --client-secret "$client_secret" \
+        --email "$cuenta_email"
+
+    if [[ $? -ne 0 ]]; then
+        _error "Falló la autorización OAuth2"
+        return 1
+    fi
+
+    if [[ ! -f "$token_file" ]]; then
+        _error "No se generó el archivo de tokens"
+        return 1
+    fi
+
+    _ok "Autorización OAuth2 completada"
+
+    # 3e. Generar archivo mbsyncrc
+    local mbsyncrc_file="${SCRIPT_DIR}/mbsyncrc"
+    local mail_dir="${SETUP_DESTINO}/gmail-maildir"
+
+    cat > "$mbsyncrc_file" << EOF
+# ============================================================
+# Configuración de mbsync para backup de Gmail
+# Generado por: ./backup_master.sh --setup
+# NO contiene credenciales — los tokens se gestionan vía mutt_oauth2.py
+# ============================================================
+
+IMAPAccount gmail
+Host imap.gmail.com
+User ${cuenta_email}
+PassCmd "python3 ${oauth2_script} ${token_file}"
+AuthMechs XOAUTH2
+SSLType IMAPS
+CertificateFile /etc/ssl/certs/ca-certificates.crt
+
+IMAPStore gmail-remote
+Account gmail
+
+MaildirStore gmail-local
+Subfolders Verbatim
+Path ${mail_dir}/
+Inbox ${mail_dir}/INBOX
+
+Channel gmail
+Far :gmail-remote:
+Near :gmail-local:
+Patterns *
+Create Near
+Expunge None
+SyncState *
+EOF
+
+    _ok "Archivo mbsyncrc generado"
+
+    # 3f. Test de conexión
+    echo ""
+    echo "  Verificando conexión con Gmail..."
+
+    if mbsync -c "$mbsyncrc_file" --list gmail &>/dev/null; then
+        _ok "Conexión IMAP con Gmail verificada"
+    else
+        _warn "No se pudo verificar la conexión IMAP (podría funcionar igualmente)"
+        _warn "Se verificará durante la primera ejecución del backup"
     fi
 }
 
@@ -267,9 +431,12 @@ BACKUP_DRIVE_DIR="\${BACKUP_DESTINO}/google-drive"
 # Nombre del remote en rclone (sin los ":", solo el nombre)
 BACKUP_DRIVE_REMOTE="${SETUP_DRIVE_REMOTE}"
 
-# Configuración de backup Thunderbird/Gmail
-BACKUP_MAIL_ORIGEN="\$HOME/.thunderbird"
-BACKUP_MAIL_DIR="\${BACKUP_DESTINO}/thunderbird"
+# Configuración de backup Gmail (mbsync + OAuth2)
+BACKUP_MAIL_DIR="\${BACKUP_DESTINO}/gmail-maildir"
+BACKUP_MAIL_CUENTA="${SETUP_MAIL_CUENTA}"
+BACKUP_MAIL_MBSYNCRC="\${SCRIPT_DIR}/mbsyncrc"
+BACKUP_MAIL_TOKENFILE="\${HOME}/.local/share/backups-automaticos/gmail-tokens"
+BACKUP_MAIL_OAUTH2_SCRIPT="\${SCRIPT_DIR}/lib/mutt_oauth2.py"
 
 # Nombre del archivo marcador que identifica el volumen de backups
 BACKUP_MARCADOR=".backup_id"
@@ -345,7 +512,7 @@ ejecutar_setup() {
 
     _seleccionar_disco || return 1
     _seleccionar_remote || return 1
-    _verificar_thunderbird
+    _configurar_mbsync || return 1
     _verificar_github
     _generar_config
     _inicializar_volumen_setup

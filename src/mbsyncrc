@@ -1,0 +1,29 @@
+# ============================================================
+# Configuración de mbsync para backup de Gmail
+# Generado por: ./backup_master.sh --setup
+# NO contiene credenciales — los tokens se gestionan vía mutt_oauth2.py
+# ============================================================
+
+IMAPAccount gmail
+Host imap.gmail.com
+User rodanmuro@gmail.com
+PassCmd "python3 /home/administrador/proyectos/sh/backups-automaticos/src/lib/mutt_oauth2.py /home/administrador/.local/share/backups-automaticos/gmail-tokens"
+AuthMechs XOAUTH2
+SSLType IMAPS
+CertificateFile /etc/ssl/certs/ca-certificates.crt
+
+IMAPStore gmail-remote
+Account gmail
+
+MaildirStore gmail-local
+Subfolders Verbatim
+Path /media/administrador/Kingston/backups-automaticos/gmail-maildir/
+Inbox /media/administrador/Kingston/backups-automaticos/gmail-maildir/INBOX
+
+Channel gmail
+Far :gmail-remote:
+Near :gmail-local:
+Patterns *
+Create Near
+Expunge None
+SyncState *

@@ -5,6 +5,10 @@
 src/.env
 src/.env.*
 
+# Tokens OAuth2 (nunca commitear)
+*-tokens
+*.tokens
+
 # Configuración de rclone
 src/rclone.conf
 

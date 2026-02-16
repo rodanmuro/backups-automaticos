@@ -3,9 +3,10 @@
 # verificaciones.sh — Verificaciones previas a la ejecución
 # ============================================================
 
-# Verifica que el disco destino esté montado
-# Retorna 0 si está montado, 1 si no
-# Uso: verificar_disco_montado "/mnt/backup"
+# Verifica que el disco destino esté disponible
+# Acepta tanto puntos de montaje directos como subdirectorios dentro de uno
+# Retorna 0 si está accesible, 1 si no
+# Uso: verificar_disco_montado "/media/user/Kingston/backups-automaticos"
 verificar_disco_montado() {
     local ruta="$1"
 
@@ -14,7 +15,8 @@ verificar_disco_montado() {
         return 1
     fi
 
-    if mountpoint -q "$ruta" 2>/dev/null; then
+    # Verificar que el directorio exista y sea accesible
+    if [[ -d "$ruta" && -w "$ruta" ]]; then
         return 0
     else
         return 1

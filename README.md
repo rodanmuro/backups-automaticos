@@ -1,6 +1,6 @@
 # Backups Automaticos
 
-Sistema automatizado de copias de seguridad local para Linux. Respalda Google Drive, repositorios GitHub y correo Gmail (Thunderbird) a un disco externo, ejecutándose automáticamente al iniciar sesión.
+Sistema automatizado de copias de seguridad local para Linux. Respalda Google Drive, repositorios GitHub y correo Gmail a un disco externo, ejecutándose automáticamente al iniciar sesión.
 
 ## Qué respalda
 
@@ -8,7 +8,7 @@ Sistema automatizado de copias de seguridad local para Linux. Respalda Google Dr
 |----------|-------------|--------|
 | Google Drive | rclone | `rclone sync` — espejo incremental |
 | GitHub | git + gh | `git clone --mirror` + `git remote update` |
-| Gmail | Thunderbird + rsync | IMAP sync local + `rsync` del perfil |
+| Gmail | mbsync (isync) | IMAP directo con OAuth2 → formato Maildir |
 
 ## Requisitos
 
@@ -23,15 +23,48 @@ Sistema automatizado de copias de seguridad local para Linux. Respalda Google Dr
 | `git` | `sudo apt install git` | Clonar repos GitHub como mirrors |
 | `gh` | [cli.github.com](https://cli.github.com/) | Listar repos del usuario |
 | `rclone` | [rclone.org/install](https://rclone.org/install.sh) | Sincronizar Google Drive |
-| `rsync` | `sudo apt install rsync` | Copiar perfil Thunderbird |
+| `isync` | `sudo apt install isync` | Sincronizar Gmail vía IMAP (`mbsync`) |
+| `cyrus-sasl-xoauth2` | [Compilar desde fuente](#compilar-cyrus-sasl-xoauth2) | Plugin SASL para autenticación OAuth2 |
+| `python3` | Preinstalado | Ejecutar helper de tokens OAuth2 |
 | `libnotify-bin` | `sudo apt install libnotify-bin` | Notificaciones desktop (`notify-send`) |
-| Thunderbird | Preinstalado en Linux Mint | Sincronizar Gmail por IMAP |
+
+#### Compilar cyrus-sasl-xoauth2
+
+mbsync necesita el mecanismo XOAUTH2 para autenticarse con Gmail. Este plugin no está en los repositorios de apt y debe compilarse desde fuente:
+
+```bash
+# Dependencias de compilación
+sudo apt install build-essential automake autoconf libtool pkg-config libsasl2-dev
+
+# Clonar, compilar e instalar
+git clone https://github.com/moriyoshi/cyrus-sasl-xoauth2.git /tmp/cyrus-sasl-xoauth2
+cd /tmp/cyrus-sasl-xoauth2
+./autogen.sh
+./configure
+make
+sudo make install
+```
+
+Verificar que el plugin quedó instalado:
+
+```bash
+# Debe existir en alguna de estas rutas
+ls /usr/lib/sasl2/libxoauth2.so \
+   /usr/lib/x86_64-linux-gnu/sasl2/libxoauth2.so \
+   /usr/local/lib/sasl2/libxoauth2.so 2>/dev/null
+```
+
+Si el plugin se instaló en `/usr/lib/sasl2/` pero mbsync lo busca en `/usr/lib/x86_64-linux-gnu/sasl2/`, crear un symlink:
+
+```bash
+sudo ln -sf /usr/lib/sasl2/libxoauth2.so /usr/lib/x86_64-linux-gnu/sasl2/libxoauth2.so
+```
 
 ### Configuración previa
 
 1. **GitHub CLI**: autenticarse con `gh auth login`
 2. **rclone**: configurar un remote de Google Drive con `rclone config`
-3. **Thunderbird**: agregar cuenta Gmail con IMAP (no POP3)
+3. **OAuth2 Gmail**: crear credenciales en [Google Cloud Console](https://console.cloud.google.com/) (tipo: Aplicación de escritorio). Publicar la app en modo "In production" para tokens persistentes
 4. **Disco externo**: montado y accesible
 
 ## Instalación rápida
@@ -45,10 +78,11 @@ cd backups-automaticos
 El wizard interactivo te guía paso a paso:
 1. Seleccionar disco/partición de backup
 2. Seleccionar remote de rclone (Google Drive)
-3. Verificar Thunderbird y GitHub CLI
-4. Generar configuración
-5. Inicializar volumen de backup
-6. Instalar servicio systemd
+3. Configurar mbsync con Gmail (OAuth2)
+4. Verificar GitHub CLI
+5. Generar configuración
+6. Inicializar volumen de backup
+7. Instalar servicio systemd
 
 ## Uso
 
@@ -80,11 +114,13 @@ backups-automaticos/
 │   │   ├── logger.sh             # Funciones de logging
 │   │   ├── verificaciones.sh     # Verificaciones pre-ejecución
 │   │   ├── alertas.sh            # Notificaciones desktop
-│   │   └── setup_wizard.sh       # Wizard interactivo
+│   │   ├── setup_wizard.sh       # Wizard interactivo
+│   │   └── mutt_oauth2.py       # Helper OAuth2 para tokens Gmail
+│   ├── mbsyncrc                  # Configuración mbsync (generada por --setup)
 │   └── modulos/
 │       ├── backup_github.sh      # Módulo GitHub (git mirror)
 │       ├── backup_drive.sh       # Módulo Google Drive (rclone)
-│       └── backup_mail.sh        # Módulo Gmail/Thunderbird (rsync)
+│       └── backup_mail.sh        # Módulo Gmail (mbsync + OAuth2)
 ├── planeacion/
 │   └── arquitectura_backup_fundacional.md
 ├── bitacoras/                    # Registro de desarrollo
@@ -102,7 +138,7 @@ Encender equipo
     → Ejecutar módulos:
         1. GitHub: clona/actualiza mirrors de todos los repos
         2. Drive: rclone sync de todo Google Drive
-        3. Mail: rsync del perfil Thunderbird
+        3. Mail: mbsync sincroniza Gmail vía IMAP (OAuth2/Maildir)
     → Registrar resultado en logs
     → Notificación desktop con resultado
 ```
@@ -130,6 +166,7 @@ El archivo `src/config.env` se genera automáticamente con `--setup`. Variables 
 | `BACKUP_INTERVALO` | Segundos entre ejecuciones (default: 86400 = 24h) |
 | `BACKUP_DRIVE_REMOTE` | Nombre del remote en rclone |
 | `BACKUP_NOTIFICACIONES` | Habilitar notificaciones desktop |
+| `BACKUP_MAIL_CUENTA` | Cuenta Gmail para mbsync |
 
 ## Decisiones de diseño
 
@@ -138,3 +175,5 @@ El archivo `src/config.env` se genera automáticamente con `--setup`. Variables 
 - **SSH con fallback HTTPS**: GitHub repos se clonan por SSH, si falla se reintenta por HTTPS.
 - **systemd-inhibit**: evita que el sistema suspenda mientras el backup está en progreso.
 - **Repos eliminados se conservan**: si un repo se borra de GitHub, el mirror local se mantiene.
+- **mbsync + OAuth2**: Gmail se sincroniza directamente vía IMAP con autenticación OAuth2 (XOAUTH2), sin depender de un cliente gráfico como Thunderbird. Los correos se almacenan en formato Maildir estándar.
+- **Expunge None**: mbsync nunca borra correos del servidor — funciona como backup unidireccional.
