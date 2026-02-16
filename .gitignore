@@ -1,0 +1,14 @@
+# Logs de backups
+*.log
+
+# Variables de entorno y credenciales
+src/.env
+src/.env.*
+
+# Configuración de rclone
+src/rclone.conf
+
+# Archivos temporales
+*.tmp
+*.swp
+*~
