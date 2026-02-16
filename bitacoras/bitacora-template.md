@@ -1,4 +1,4 @@
-# Bitácora XXX_MM_DD_AAAA descripcion_corta
+# Bitácora XXX_MM_DD_AAAA hora HH:mm:ss descripcion_corta
 
 ## Qué fue lo que se hizo
 - Incluya acá detalles de implementación del código, sin copiar el código completo, sólo ideas relevantes.
