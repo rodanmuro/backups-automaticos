@@ -36,6 +36,13 @@ main() {
         inicializar_volumen "$BACKUP_DESTINO" "$BACKUP_MARCADOR" "$BACKUP_ID"
         echo "Volumen inicializado con ID: ${BACKUP_ID}"
         echo "Archivo marcador: ${BACKUP_DESTINO}/${BACKUP_MARCADOR}"
+
+        # Configurar gh como credential helper de git (HTTPS para repos privados)
+        if command -v gh &>/dev/null; then
+            gh auth setup-git 2>/dev/null
+            echo "GitHub: credential helper configurado (gh auth setup-git)"
+        fi
+
         exit 0
     fi
 
