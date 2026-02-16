@@ -27,18 +27,36 @@ source "${SCRIPT_DIR}/modulos/backup_mail.sh"
 # ============================================================
 
 main() {
-    # Soporte para --install: instalar servicio systemd de usuario
+    # Soporte para --setup: wizard interactivo de configuración
+    if [[ "${1:-}" == "--setup" ]]; then
+        source "${SCRIPT_DIR}/lib/setup_wizard.sh"
+        ejecutar_setup
+        exit $?
+    fi
+
+    # Soporte para --install: generar e instalar servicio systemd de usuario
     if [[ "${1:-}" == "--install" ]]; then
-        local service_src="${SCRIPT_DIR}/../systemd/backup-automatico.service"
+        local script_real
+        script_real="$(realpath "${SCRIPT_DIR}/backup_master.sh")"
         local service_dest="$HOME/.config/systemd/user/backup-automatico.service"
 
-        if [[ ! -f "$service_src" ]]; then
-            echo "Error: archivo de servicio no encontrado: ${service_src}" >&2
-            exit 1
-        fi
-
         mkdir -p "$HOME/.config/systemd/user"
-        cp "$service_src" "$service_dest"
+
+        cat > "$service_dest" << EOF
+[Unit]
+Description=Backup automático local
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=systemd-inhibit --what=sleep --who="Backup Automático" --why="Copia de seguridad en progreso" ${script_real}
+Environment=DISPLAY=${DISPLAY:-:0}
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus
+
+[Install]
+WantedBy=graphical-session.target
+EOF
+
         systemctl --user daemon-reload
         systemctl --user enable backup-automatico.service
 
